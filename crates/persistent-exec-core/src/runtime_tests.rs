@@ -146,6 +146,26 @@ fn pipe_session_stdin_is_closed() {
 
 #[cfg(unix)]
 #[test]
+fn commands_run_with_non_interactive_environment() {
+    let runtime = ExecRuntime::new().expect("runtime should initialize");
+    for tty in [false, true] {
+        let session_id = runtime
+            .spawn(request(
+                "printf '%s|%s|%s|%s|%s' \"$PAGER\" \"$GIT_PAGER\" \"$GH_PAGER\" \"$TERM\" \"$NO_COLOR\"",
+                tty,
+            ))
+            .expect("spawn should succeed");
+        let response = collect_until_exit(&runtime, session_id);
+        assert_eq!(
+            String::from_utf8_lossy(&response.output),
+            "cat|cat|cat|dumb|1",
+            "tty={tty}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn concurrent_spawns_keep_the_session_count_bounded() {
     const CALLERS: usize = 80;
     const SESSION_LIMIT: usize = 64;

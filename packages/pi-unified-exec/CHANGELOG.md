@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Run commands with `PAGER`, `GIT_PAGER`, and `GH_PAGER` set to `cat`, `NO_COLOR=1`, `TERM=dumb`, and an empty `COLORTERM`, so `git log` and similar tools no longer open a pager and wait forever in a PTY session.
 - Reclaim the least recently used session (exited sessions first, never the eight most recent) when 64 sessions are open, instead of rejecting every new command once enough sessions had exited without being polled again.
 
 ## [0.1.6] - 2026-09-11

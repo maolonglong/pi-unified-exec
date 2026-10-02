@@ -473,7 +473,10 @@ test(
       undefined,
       { cwd: process.cwd() },
     );
-    expect(first.details.output).toBe(process.platform === "win32" ? "ready" : "");
+    // ConPTY announces itself with terminal setup sequences before the program's own output.
+    if (process.platform === "win32") {
+      expect(stripVTControlCharacters(first.details.output)).toBe("ready");
+    } else expect(["", "ready"]).toContain(first.details.output); // the program may beat the 250 ms yield
     expect(typeof first.details.session_id).toBe("number");
 
     const second = await stdin.execute(
@@ -488,7 +491,7 @@ test(
       { cwd: process.cwd() },
     );
     // The PTY also echoes the written line, so assert only the program's own output.
-    const transcript = `${first.details.output}${second.details.output}`;
+    const transcript = stripVTControlCharacters(`${first.details.output}${second.details.output}`);
     expect(transcript.replace(/hello\r?\n/, "")).toBe("readyreceived:hello");
     expect(second.details.exit_code).toBe(0);
 
@@ -878,58 +881,62 @@ test("formats long durations like pi's shell tools", () => {
   expect(text(59_900)).toContain("took 59.9s");
 });
 
-test("gives the model Codex's text result and structured content", async () => {
-  const harness = createHarness();
-  await harness.handlers.get("session_start")?.();
-  const exec = harness.tools.get("exec_command")!;
-  const context = { cwd: process.cwd() };
-  try {
-    const done = await exec.execute(
-      "ok",
-      { cmd: `node -e "process.stdout.write('hi')"` },
-      undefined,
-      undefined,
-      context,
-    );
-    expect(done.content).toHaveLength(1);
-    expect(done.content[0].text).toMatch(
-      /^Wall time: \d+\.\d{4} seconds\nProcess exited with code 0\nOriginal token count: 1\nOutput:\nhi$/,
-    );
-    expect(done.structuredContent).toEqual(done.details);
-    expect(done.details).toMatchObject({ output: "hi", exit_code: 0, original_token_count: 1 });
-    expect(done.isError).toBeUndefined();
+test(
+  "gives the model Codex's text result and structured content",
+  async () => {
+    const harness = createHarness();
+    await harness.handlers.get("session_start")?.();
+    const exec = harness.tools.get("exec_command")!;
+    const context = { cwd: process.cwd() };
+    try {
+      const done = await exec.execute(
+        "ok",
+        { cmd: `node -e "process.stdout.write('hi')"` },
+        undefined,
+        undefined,
+        context,
+      );
+      expect(done.content).toHaveLength(1);
+      expect(done.content[0].text).toMatch(
+        /^Wall time: \d+\.\d{4} seconds\nProcess exited with code 0\nOriginal token count: 1\nOutput:\nhi$/,
+      );
+      expect(done.structuredContent).toEqual(done.details);
+      expect(done.details).toMatchObject({ output: "hi", exit_code: 0, original_token_count: 1 });
+      expect(done.isError).toBeUndefined();
 
-    const failed = await exec.execute(
-      "bad",
-      { cmd: `node -e "process.exit(3)"` },
-      undefined,
-      undefined,
-      context,
-    );
-    // PowerShell reports any failing native command as exit code 1, so only assert non-zero.
-    expect(failed.content[0].text).toMatch(/Process exited with code [1-9]\d*/);
-    expect(failed.isError).toBe(true);
+      const failed = await exec.execute(
+        "bad",
+        { cmd: `node -e "process.exit(3)"` },
+        undefined,
+        undefined,
+        context,
+      );
+      // PowerShell reports any failing native command as exit code 1, so only assert non-zero.
+      expect(failed.content[0].text).toMatch(/Process exited with code [1-9]\d*/);
+      expect(failed.isError).toBe(true);
 
-    const running = await exec.execute(
-      "run",
-      { cmd: `node -e "setTimeout(()=>{},30000)"`, yield_time_ms: 250 },
-      undefined,
-      undefined,
-      context,
-    );
-    expect(running.content[0].text).toMatch(
-      /^Wall time: \d+\.\d{4} seconds\nProcess running with session ID \d+\nOriginal token count: 0\nOutput:\n$/,
-    );
-    expect(running.isError).toBeUndefined();
-    expect(exec.outputSchema).toMatchObject({
-      type: "object",
-      required: ["wall_time_seconds", "output"],
-      additionalProperties: false,
-    });
-  } finally {
-    await harness.handlers.get("session_shutdown")?.();
-  }
-});
+      const running = await exec.execute(
+        "run",
+        { cmd: `node -e "setTimeout(()=>{},30000)"`, yield_time_ms: 250 },
+        undefined,
+        undefined,
+        context,
+      );
+      expect(running.content[0].text).toMatch(
+        /^Wall time: \d+\.\d{4} seconds\nProcess running with session ID \d+\nOriginal token count: 0\nOutput:\n$/,
+      );
+      expect(running.isError).toBeUndefined();
+      expect(exec.outputSchema).toMatchObject({
+        type: "object",
+        required: ["wall_time_seconds", "output"],
+        additionalProperties: false,
+      });
+    } finally {
+      await harness.handlers.get("session_shutdown")?.();
+    }
+  },
+  PERSISTENT_SESSION_TEST_TIMEOUT_MS,
+);
 
 test("marks truncation in the details instead of the output text", async () => {
   const harness = createHarness();
@@ -1003,6 +1010,23 @@ test("replaces the previous runtime when a session starts twice", async () => {
   await harness.handlers.get("session_shutdown")?.();
 });
 
+function fakeRuntime(overrides: Partial<RuntimeApi> = {}): RuntimeApi & { destroyed: number } {
+  const runtime = {
+    destroyed: 0,
+    spawn: () => 1,
+    write() {},
+    poll: () => ({ output: "ok", original_bytes: 2, omitted_bytes: 0, exit_code: 0 }),
+    terminate() {},
+    destroy() {
+      runtime.destroyed += 1;
+    },
+    ...overrides,
+  };
+  return runtime;
+}
+
+const execContext = { cwd: process.cwd() };
+
 test("keeps pi's shell tools and notifies the user when the native runtime fails to load", async () => {
   const harness = createHarness();
   const notifications: Array<{ message: string; type?: string }> = [];
@@ -1015,17 +1039,122 @@ test("keeps pi's shell tools and notifies the user when the native runtime fails
       { type: "session_start", reason: "startup" },
       { ui: { notify: (message: string, type?: string) => notifications.push({ message, type }) } },
     );
+    expect(harness.activeTools()).toEqual(["read", "bash", "powershell", "write"]);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].type).toBe("error");
+    expect(notifications[0].message).toContain("native library missing");
+
+    // A call after a failed load retries instead of caching the failure.
+    const exec = harness.tools.get("exec_command")!;
+    await expect(
+      exec.execute("a", { cmd: "x" }, undefined, undefined, execContext),
+    ).rejects.toThrow("native library missing");
+    create.mockReturnValue(fakeRuntime());
+    const result = await exec.execute("b", { cmd: "x" }, undefined, undefined, execContext);
+    expect(result.details).toMatchObject({ output: "ok", exit_code: 0 });
+    expect(create).toHaveBeenCalledTimes(3);
+  } finally {
+    create.mockRestore();
+    await harness.handlers.get("session_shutdown")?.();
+  }
+});
+
+test("session_start tolerates hosts without a UI", async () => {
+  const harness = createHarness();
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockImplementation(() => {
+    throw new Error("native library missing");
+  });
+  try {
+    await harness.handlers.get("session_start")?.({ type: "session_start" }, {});
+    await harness.handlers.get("session_start")?.();
   } finally {
     create.mockRestore();
   }
+});
 
-  expect(harness.activeTools()).toEqual(["read", "bash", "powershell", "write"]);
-  expect(notifications).toHaveLength(1);
-  expect(notifications[0].type).toBe("error");
-  expect(notifications[0].message).toContain("native library missing");
-  await expect(
-    harness.tools
-      .get("exec_command")!
-      .execute("call", { cmd: "echo hi" }, undefined, undefined, { cwd: process.cwd() }),
-  ).rejects.toThrow("persistent-exec runtime is not initialized");
+test("creates the runtime on the first exec_command when session_start never fired", async () => {
+  const harness = createHarness();
+  const runtime = fakeRuntime();
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockReturnValue(runtime);
+  try {
+    const exec = harness.tools.get("exec_command")!;
+    const first = await exec.execute("a", { cmd: "x" }, undefined, undefined, execContext);
+    await exec.execute("b", { cmd: "x" }, undefined, undefined, execContext);
+    expect(first.details).toMatchObject({ output: "ok", exit_code: 0 });
+    expect(create).toHaveBeenCalledTimes(1);
+    await harness.handlers.get("session_shutdown")?.();
+    expect(runtime.destroyed).toBe(1);
+  } finally {
+    create.mockRestore();
+  }
+});
+
+test("concurrent first calls share a single runtime", async () => {
+  const harness = createHarness();
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockImplementation(() => fakeRuntime());
+  try {
+    const exec = harness.tools.get("exec_command")!;
+    await Promise.all([
+      exec.execute("a", { cmd: "x" }, undefined, undefined, execContext),
+      exec.execute("b", { cmd: "x" }, undefined, undefined, execContext),
+    ]);
+    expect(create).toHaveBeenCalledTimes(1);
+  } finally {
+    create.mockRestore();
+    await harness.handlers.get("session_shutdown")?.();
+  }
+});
+
+test("a runtime created after shutdown is destroyed instead of installed", async () => {
+  const harness = createHarness();
+  const late = fakeRuntime();
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockReturnValue(late);
+  try {
+    const exec = harness.tools.get("exec_command")!;
+    // Shut down while the creation is still awaiting the SDK; bun's expect().rejects would drain it first.
+    const outcome = exec.execute("a", { cmd: "x" }, undefined, undefined, execContext).then(
+      () => undefined,
+      (error: Error) => error.message,
+    );
+    await harness.handlers.get("session_shutdown")?.();
+    expect(await outcome).toContain("shut down");
+    expect(late.destroyed).toBe(1);
+  } finally {
+    create.mockRestore();
+  }
+});
+
+test("write_stdin never creates a runtime and reports an unknown session", async () => {
+  const harness = createHarness();
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockReturnValue(fakeRuntime());
+  try {
+    await expect(
+      harness.tools
+        .get("write_stdin")!
+        .execute("a", { session_id: 7 }, undefined, undefined, execContext),
+    ).rejects.toThrow("unknown session_id 7");
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    create.mockRestore();
+  }
+});
+
+test("before_agent_start swaps the shell tools when session_start never fired", async () => {
+  const harness = createHarness();
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockReturnValue(fakeRuntime());
+  try {
+    await harness.handlers.get("before_agent_start")?.({ type: "before_agent_start" }, {});
+    expect(harness.activeTools()).toEqual(["read", "write", "exec_command", "write_stdin"]);
+    await harness.handlers.get("before_agent_start")?.({ type: "before_agent_start" }, {});
+    expect(create).toHaveBeenCalledTimes(1);
+  } finally {
+    create.mockRestore();
+    await harness.handlers.get("session_shutdown")?.();
+  }
 });

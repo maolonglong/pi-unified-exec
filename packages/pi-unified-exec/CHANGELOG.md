@@ -13,6 +13,7 @@
 
 - Throttle streaming output updates to 100 ms, format durations like pi's built-in bash tool (`2m 5s`), honor carriage-return overwrites such as progress bars in the preview, and report truncation from the runtime's metadata instead of re-deriving it from the displayed text.
 - Keep pi's built-in shell tools and show an error notification when the native runtime fails to load, instead of leaving `exec_command` active without a runtime.
+- Create the native runtime on first use when the host never emits `session_start` (for example pi embedded through the SDK), and retry on the next call after a failed load instead of staying unusable.
 - Destroy the previous native runtime when a session starts without a preceding shutdown, so a repeated `session_start` no longer leaks one.
 - Run commands with `PAGER`, `GIT_PAGER`, and `GH_PAGER` set to `cat`, `NO_COLOR=1`, `TERM=dumb`, and an empty `COLORTERM`, so `git log` and similar tools no longer open a pager and wait forever in a PTY session.
 - Reclaim the least recently used session (exited sessions first, never the eight most recent) when 64 sessions are open, instead of rejecting every new command once enough sessions had exited without being polled again.

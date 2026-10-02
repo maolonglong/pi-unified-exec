@@ -35,7 +35,7 @@ Tool names, parameters, and result text follow Codex, so prompts written for Cod
 
 Commands use `$SHELL` on Unix and PowerShell on Windows. No additional configuration is needed.
 
-Starting a new session, reloading extensions, or exiting pi terminates processes started by the extension. It runs with the same permissions as pi and does not add a sandbox or approval prompts.
+Starting a new session, reloading extensions, or exiting pi terminates processes started by the extension. Hosts that never emit `session_shutdown` keep a lazily created runtime until the process exits. It runs with the same permissions as pi and does not add a sandbox or approval prompts.
 
 ## Output and cancellation
 

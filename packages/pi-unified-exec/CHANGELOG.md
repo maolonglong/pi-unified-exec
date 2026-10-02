@@ -13,6 +13,8 @@
 
 - Throttle streaming output updates to 100 ms, format durations like pi's built-in bash tool (`2m 5s`), honor carriage-return overwrites such as progress bars in the preview, and report truncation from the runtime's metadata instead of re-deriving it from the displayed text.
 - Keep pi's built-in shell tools and show an error notification when the native runtime fails to load, instead of leaving `exec_command` active without a runtime.
+- Hand back the built-in shell tools this extension replaced when a later session fails to start the runtime, instead of leaving that session without a shell tool.
+- Free the native decoder state of sessions that were reclaimed at the session limit and never polled again, so it no longer grows without bound.
 - Create the native runtime on first use when the host never emits `session_start` (for example pi embedded through the SDK), and retry on the next call after a failed load instead of staying unusable.
 - Destroy the previous native runtime when a session starts without a preceding shutdown, so a repeated `session_start` no longer leaks one.
 - Stop a console window from appearing for every command on Windows when pi runs without a console, for example when launched from a GUI.

@@ -1062,17 +1062,27 @@ test("keeps pi's shell tools and notifies the user when the native runtime fails
   }
 });
 
-test("session_start tolerates hosts without a UI", async () => {
+test("restores the shell tools it replaced when a later session cannot start the runtime", async () => {
   const harness = createHarness();
+  const notifications: string[] = [];
+  const ctx = { ui: { notify: (message: string) => notifications.push(message) } };
   const sdk = await loadSdk();
-  const create = spyOn(sdk.PersistentExecRuntime, "create").mockImplementation(() => {
-    throw new Error("native library missing");
-  });
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockReturnValue(fakeRuntime());
   try {
-    await harness.handlers.get("session_start")?.({ type: "session_start" }, {});
-    await harness.handlers.get("session_start")?.();
+    await harness.handlers.get("session_start")?.({ type: "session_start" }, ctx);
+    expect(harness.activeTools()).toEqual(["read", "write", "exec_command", "write_stdin"]);
+
+    await harness.handlers.get("session_shutdown")?.();
+    create.mockImplementation(() => {
+      throw new Error("native library missing");
+    });
+    await harness.handlers.get("session_start")?.({ type: "session_start" }, ctx);
+
+    expect(harness.activeTools()).toEqual(["read", "write", "bash", "powershell"]);
+    expect(notifications).toHaveLength(1);
   } finally {
     create.mockRestore();
+    await harness.handlers.get("session_shutdown")?.();
   }
 });
 

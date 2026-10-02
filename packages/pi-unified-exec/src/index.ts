@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
@@ -97,6 +97,8 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
   // Bumped whenever the runtime is torn down so a creation still in flight cannot install itself.
   let generation = 0;
   let prepared = false;
+  // Built-in shell tools this extension removed from the active set, to hand back on failure.
+  let replacedTools: string[] = [];
   const sessionInteractions = new Map<number, Promise<void>>();
 
   function destroyRuntime(): void {
@@ -135,21 +137,23 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
   }
 
   /** Swaps pi's shell tools for ours, or hands shell access back and tells the user on failure. */
-  async function prepareSession(ctx: UiContext | undefined): Promise<void> {
+  async function prepareSession(ctx: ExtensionContext): Promise<void> {
     prepared = true;
     const others = pi.getActiveTools().filter((name) => name !== EXEC_TOOL && name !== STDIN_TOOL);
     try {
       await ensureRuntime();
     } catch (error) {
       // pi activates newly registered tools; without a runtime they could only fail.
-      pi.setActiveTools(others);
+      pi.setActiveTools([...new Set([...others, ...replacedTools])]);
       const reason = error instanceof Error ? error.message : String(error);
-      ctx?.ui?.notify?.(
+      ctx.ui.notify(
         `pi-unified-exec could not start its native runtime (${reason}); using pi's built-in shell tools.`,
         "error",
       );
       return;
     }
+    const replaced = others.filter((name) => REPLACED_TOOLS.has(name));
+    if (replaced.length > 0) replacedTools = replaced;
     pi.setActiveTools([
       ...others.filter((name) => !REPLACED_TOOLS.has(name)),
       EXEC_TOOL,
@@ -292,10 +296,6 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
     destroyRuntime();
   });
 }
-
-type UiContext = {
-  ui?: { notify?: (message: string, type?: "info" | "warning" | "error") => void };
-};
 
 type UpdateSink =
   | ((update: {

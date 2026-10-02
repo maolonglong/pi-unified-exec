@@ -9,8 +9,6 @@ use std::sync::atomic::Ordering;
 
 use persistent_exec_pty::SpawnedProcess;
 use persistent_exec_pty::TerminalSize;
-use serde::Deserialize;
-use serde::Serialize;
 use tokio::runtime::Runtime;
 
 use crate::error::ErrorKind;
@@ -33,15 +31,14 @@ const COMMAND_ENV: [(&str, &str); 6] = [
     ("GH_PAGER", "cat"),
 ];
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpawnRequest {
     pub cmd: String,
     pub workdir: PathBuf,
-    #[serde(default)]
     pub tty: bool,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PollResponse {
     /// First retained bytes consumed by this poll.
     pub output: Vec<u8>,

@@ -11,8 +11,6 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 persistent-exec-pty = { path = "../persistent-exec-pty" }
-serde.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

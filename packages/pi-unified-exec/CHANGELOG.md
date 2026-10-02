@@ -5,9 +5,9 @@
 ### Changed
 
 - Commands started without `tty: true` now run with stdin closed, matching Codex: programs that read stdin see EOF instead of hanging, and `write_stdin` rejects non-empty input (other than Ctrl-C) with an error that tells the model to rerun with `tty=true`.
-
 - Tool results sent to the model now use the Codex text format (`Wall time`, `Process exited with code N` or `Process running with session ID N`, `Original token count`, `Output`) instead of a JSON dump. The same data is exposed as `structuredContent` with a declared `outputSchema`, and failed or cancelled commands are flagged with `isError` so pi renders them as errors.
 - Replace pi's built-in `powershell` tool together with `bash` while the extension is active, so the model is not offered two competing shell tools on Windows.
+- Ship smaller native libraries (the macOS arm64 library shrinks from about 1.5 MB to 0.9 MB) by stripping symbols and enabling thin LTO in release builds.
 
 ### Fixed
 
@@ -15,6 +15,10 @@
 - Keep pi's built-in shell tools and show an error notification when the native runtime fails to load, instead of leaving `exec_command` active without a runtime.
 - Create the native runtime on first use when the host never emits `session_start` (for example pi embedded through the SDK), and retry on the next call after a failed load instead of staying unusable.
 - Destroy the previous native runtime when a session starts without a preceding shutdown, so a repeated `session_start` no longer leaks one.
+- Stop a console window from appearing for every command on Windows when pi runs without a console, for example when launched from a GUI.
+- Close the output of a PTY command on Windows once its last process exits (Windows 11 24H2 and newer), instead of keeping it open until the session is dropped.
+- Terminate or reclaim PTY sessions on macOS even when the system denies signalling the whole process group, which previously could leave their processes running.
+- Close inherited file descriptors in Linux child processes without allocating between fork and exec, so a command can no longer deadlock before it starts when another thread holds the allocator lock.
 - Run commands with `PAGER`, `GIT_PAGER`, and `GH_PAGER` set to `cat`, `NO_COLOR=1`, `TERM=dumb`, and an empty `COLORTERM`, so `git log` and similar tools no longer open a pager and wait forever in a PTY session.
 - Reclaim the least recently used session (exited sessions first, never the eight most recent) when 64 sessions are open, instead of rejecting every new command once enough sessions had exited without being polled again.
 

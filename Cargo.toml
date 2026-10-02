@@ -19,7 +19,6 @@ portable-pty = "0.9.0"
 pretty_assertions = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 
 [workspace.lints.rust]
@@ -27,3 +26,10 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# The cdylib ships inside the npm native packages, so size matters. Panics must stay
+# `unwind`: the FFI layer catches them with `catch_unwind` instead of aborting the host.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

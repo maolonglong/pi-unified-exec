@@ -493,7 +493,8 @@ test(
     );
     // The PTY also echoes the written line, so assert only the program's own output.
     const transcript = `${firstOutput}${second.details.output}`.replace(/hello\r?\n/, "");
-    if (process.platform === "win32") expect(transcript.endsWith("readyreceived:hello")).toBe(true);
+    // ConPTY also redraws the echoed input with cursor controls, so check the order only.
+    if (process.platform === "win32") expect(transcript).toMatch(/ready[\s\S]*received:hello/);
     else expect(transcript).toBe("readyreceived:hello");
     expect(second.details.exit_code).toBe(0);
 

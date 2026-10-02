@@ -203,6 +203,11 @@ impl ExecRuntime {
         })
     }
 
+    /// Whether the registry still tracks `session_id`; reclaimed and finished sessions are gone.
+    pub fn has_session(&self, session_id: u64) -> bool {
+        self.registry().sessions.contains_key(&session_id)
+    }
+
     pub fn terminate(&self, session_id: u64) -> Result<()> {
         let session = self.get_session(session_id)?;
         session.terminate();

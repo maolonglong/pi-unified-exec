@@ -57,6 +57,15 @@ impl FfiRuntime {
         decoded
     }
 
+    /// Drops decoder state of sessions the runtime no longer tracks, such as reclaimed ones that
+    /// were never polled again, so the map stays bounded by the session limit.
+    fn forget_untracked_sessions(&self) {
+        self.utf8_pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|session_id, _| self.runtime.has_session(*session_id));
+    }
+
     fn forget_session(&self, session_id: u64) {
         self.utf8_pending
             .lock()
@@ -245,7 +254,10 @@ pub unsafe extern "C" fn persistent_exec_spawn(
             tty: request.tty,
         }) {
             Ok(session_id) => match i64::try_from(session_id) {
-                Ok(session_id) => PersistentExecResult::integer(session_id),
+                Ok(session_id) => {
+                    runtime.forget_untracked_sessions();
+                    PersistentExecResult::integer(session_id)
+                }
                 Err(_) => PersistentExecResult::error(
                     ErrorKind::ResourceExhausted,
                     "session identifier space exhausted",

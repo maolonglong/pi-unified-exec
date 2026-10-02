@@ -151,3 +151,45 @@ fn c_abi_rejects_unknown_request_versions() {
         persistent_exec_destroy(handle);
     }
 }
+
+#[cfg(unix)]
+fn long_running_command() -> &'static str {
+    "sleep 60"
+}
+
+#[cfg(windows)]
+fn long_running_command() -> &'static str {
+    "ping -n 60 127.0.0.1 >NUL"
+}
+
+#[test]
+fn reclaiming_a_session_drops_its_decoder_state() {
+    let (handle, _, _) = unsafe { take_result(persistent_exec_create()) };
+    let spawn_request = CString::new(format!(
+        r#"{{"version":1,"cmd":{},"workdir":{}}}"#,
+        serde_json::to_string(long_running_command()).expect("command should serialize"),
+        serde_json::to_string(env!("CARGO_MANIFEST_DIR")).expect("path should serialize")
+    ))
+    .expect("request should not contain NUL");
+    let spawn = |handle| {
+        let (_, session_id, _) =
+            unsafe { take_result(persistent_exec_spawn(handle, spawn_request.as_ptr())) };
+        session_id
+    };
+
+    // Polling gives the session decoder state; it is then abandoned and never polled again.
+    let abandoned = spawn(handle);
+    let poll_request = CString::new(format!(r#"{{"version":1,"session_id":{abandoned}}}"#))
+        .expect("request should not contain NUL");
+    unsafe { take_result(persistent_exec_poll(handle, poll_request.as_ptr())) };
+    let runtime = unsafe { &*handle.cast::<FfiRuntime>() };
+    assert_eq!(runtime.utf8_pending.lock().expect("lock").len(), 1);
+
+    // The registry holds 64 sessions, so the 65th spawn reclaims the least recently used one.
+    for _ in 0..64 {
+        spawn(handle);
+    }
+    assert_eq!(runtime.utf8_pending.lock().expect("lock").len(), 0);
+
+    unsafe { persistent_exec_destroy(handle) };
+}

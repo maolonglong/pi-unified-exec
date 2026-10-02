@@ -1,6 +1,6 @@
 # @chensl/pi-unified-exec
 
-Codex-style `unified_exec` for [pi](https://github.com/badlogic/pi-mono): long-running shell sessions that the model starts, polls, and drives with `write_stdin`, instead of one blocking `bash` call per command.
+Codex-style `unified_exec` for [pi](https://github.com/earendil-works/pi): long-running shell sessions that the model starts, polls, and drives with `write_stdin`, instead of one blocking `bash` call per command.
 
 ```bash
 pi install npm:@chensl/pi-unified-exec

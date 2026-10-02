@@ -4,8 +4,14 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
+    # A hung process or PTY test would otherwise hold a runner for the 6 hour default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -17,6 +23,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -32,6 +39,8 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
       - run: cargo fmt --all --check
+        if: matrix.os == 'ubuntu-latest'
+      - run: npx oxfmt --check packages
         if: matrix.os == 'ubuntu-latest'
       - run: cargo doc --workspace --no-deps --locked
         if: matrix.os == 'ubuntu-latest'

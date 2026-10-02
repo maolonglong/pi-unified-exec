@@ -6,6 +6,8 @@ Codex-style `unified_exec` for [pi](https://github.com/badlogic/pi-mono): long-r
 pi install npm:@chensl/pi-unified-exec
 ```
 
+Use `pi install -l npm:@chensl/pi-unified-exec` to install for the current project only.
+
 ## What the model can do
 
 pi's built-in `bash` runs a command to completion. With this extension the model can also:
@@ -14,10 +16,10 @@ pi's built-in `bash` runs a command to completion. With this extension the model
 - drive a REPL, `ssh`, a debugger, or any prompt-driven program with `tty: true`, writing input and keystrokes such as Ctrl-C (`\u0003`) to the running process
 - stop waiting on a slow command (cancel `write_stdin`) while it keeps running in its session
 
-The extension replaces pi's built-in `bash` and `powershell` tools with:
-
-- `exec_command`, which starts a command and returns its result or a session ID if it is still running
-- `write_stdin`, which sends input to a running session or checks it for more output
+| pi built-in          | Replaced by    | What changes                                                                               |
+| -------------------- | -------------- | ------------------------------------------------------------------------------------------ |
+| `bash`, `powershell` | `exec_command` | Returns a session ID when the command is still running instead of blocking until it exits. |
+| (none)               | `write_stdin`  | Sends input to a session, or polls it for new output.                                      |
 
 A typical exchange:
 

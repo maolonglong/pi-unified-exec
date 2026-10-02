@@ -213,17 +213,31 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.on("session_start", async () => {
+  pi.on("session_start", async (_event, ctx) => {
     // One native runtime per pi session; a start without a preceding shutdown must not leak one.
     runtime?.destroy();
     runtime = null;
     sessionInteractions.clear();
-    const sdk = await loadSdk();
-    runtime = sdk.PersistentExecRuntime.create();
-    const active = pi
-      .getActiveTools()
-      .filter((name) => !REPLACED_TOOLS.has(name) && name !== EXEC_TOOL && name !== STDIN_TOOL);
-    pi.setActiveTools([...active, EXEC_TOOL, STDIN_TOOL]);
+    const others = pi.getActiveTools().filter((name) => name !== EXEC_TOOL && name !== STDIN_TOOL);
+    try {
+      const sdk = await loadSdk();
+      runtime = sdk.PersistentExecRuntime.create();
+    } catch (error) {
+      // pi activates newly registered tools; without a runtime they could only fail, so hand
+      // shell access back to the built-in tools instead of breaking the session.
+      pi.setActiveTools(others);
+      const reason = error instanceof Error ? error.message : String(error);
+      ctx.ui.notify(
+        `pi-unified-exec could not start its native runtime (${reason}); using pi's built-in shell tools.`,
+        "error",
+      );
+      return;
+    }
+    pi.setActiveTools([
+      ...others.filter((name) => !REPLACED_TOOLS.has(name)),
+      EXEC_TOOL,
+      STDIN_TOOL,
+    ]);
   });
 
   pi.on("session_shutdown", async () => {

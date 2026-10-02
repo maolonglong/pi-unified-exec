@@ -1002,3 +1002,30 @@ test("replaces the previous runtime when a session starts twice", async () => {
   expect(destroyed).toBe(1);
   await harness.handlers.get("session_shutdown")?.();
 });
+
+test("keeps pi's shell tools and notifies the user when the native runtime fails to load", async () => {
+  const harness = createHarness();
+  const notifications: Array<{ message: string; type?: string }> = [];
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockImplementation(() => {
+    throw new Error("native library missing");
+  });
+  try {
+    await harness.handlers.get("session_start")?.(
+      { type: "session_start", reason: "startup" },
+      { ui: { notify: (message: string, type?: string) => notifications.push({ message, type }) } },
+    );
+  } finally {
+    create.mockRestore();
+  }
+
+  expect(harness.activeTools()).toEqual(["read", "bash", "powershell", "write"]);
+  expect(notifications).toHaveLength(1);
+  expect(notifications[0].type).toBe("error");
+  expect(notifications[0].message).toContain("native library missing");
+  await expect(
+    harness.tools
+      .get("exec_command")!
+      .execute("call", { cmd: "echo hi" }, undefined, undefined, { cwd: process.cwd() }),
+  ).rejects.toThrow("persistent-exec runtime is not initialized");
+});

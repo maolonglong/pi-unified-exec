@@ -89,6 +89,10 @@ impl Session {
         }
     }
 
+    pub(crate) fn has_exited(&self) -> bool {
+        self.process.has_exited()
+    }
+
     fn is_finished(&self) -> bool {
         self.state
             .lock()

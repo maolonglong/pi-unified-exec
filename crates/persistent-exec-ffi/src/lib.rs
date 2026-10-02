@@ -56,6 +56,13 @@ impl FfiRuntime {
         }
         decoded
     }
+
+    fn forget_session(&self, session_id: u64) {
+        self.utf8_pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&session_id);
+    }
 }
 
 fn decode_utf8(bytes: &mut Vec<u8>, flush: bool) -> String {
@@ -305,7 +312,13 @@ pub unsafe extern "C" fn persistent_exec_poll(
                 original_bytes: response.original_bytes,
                 exit_code: response.exit_code,
             }),
-            Err(error) => PersistentExecResult::error(error.kind(), error.message()),
+            Err(error) => {
+                if error.kind() == ErrorKind::NotFound {
+                    // The runtime reclaimed or finished this session; drop its decoder state.
+                    runtime.forget_session(request.session_id);
+                }
+                PersistentExecResult::error(error.kind(), error.message())
+            }
         }
     })
 }

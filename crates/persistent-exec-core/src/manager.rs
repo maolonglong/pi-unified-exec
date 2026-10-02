@@ -3,6 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
@@ -19,6 +20,8 @@ use crate::session::Session;
 use crate::session::collect_process_output;
 
 const MAX_SESSIONS: usize = 64;
+/// The most recently used sessions are never reclaimed to make room for a new one.
+const PROTECTED_RECENT_SESSIONS: usize = 8;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct SpawnRequest {
@@ -46,13 +49,62 @@ pub struct PollResponse {
 pub struct ExecRuntime {
     runtime: Option<Runtime>,
     registry: Mutex<SessionRegistry>,
+    /// Serializes spawns so capacity checks and insertions cannot interleave.
+    spawn_gate: Mutex<()>,
     next_session_id: AtomicU64,
+}
+
+#[derive(Debug)]
+struct SessionEntry {
+    session: Arc<Session>,
+    last_used: u64,
 }
 
 #[derive(Debug, Default)]
 struct SessionRegistry {
-    sessions: HashMap<u64, Arc<Session>>,
-    pending_spawns: usize,
+    sessions: HashMap<u64, SessionEntry>,
+    /// Monotonic counter standing in for a clock: higher means more recently used.
+    clock: u64,
+}
+
+impl SessionRegistry {
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    /// Makes room for one more session, reclaiming an old one when the registry is full.
+    ///
+    /// Returns the reclaimed session, which the caller must terminate outside the lock.
+    fn make_room(&mut self) -> Result<Option<Arc<Session>>> {
+        if self.sessions.len() < MAX_SESSIONS {
+            return Ok(None);
+        }
+        let session_id = self.session_to_reclaim().ok_or_else(|| {
+            ExecError::new(
+                ErrorKind::ResourceExhausted,
+                format!("at most {MAX_SESSIONS} sessions may run concurrently"),
+            )
+        })?;
+        Ok(self.sessions.remove(&session_id).map(|entry| entry.session))
+    }
+
+    /// Prefers the least recently used exited session, then the least recently used live one.
+    fn session_to_reclaim(&self) -> Option<u64> {
+        let mut by_recency = self
+            .sessions
+            .iter()
+            .map(|(id, entry)| (*id, entry.last_used, entry.session.has_exited()))
+            .collect::<Vec<_>>();
+        by_recency.sort_unstable_by_key(|(_, last_used, _)| *last_used);
+        let reclaimable = by_recency.len().saturating_sub(PROTECTED_RECENT_SESSIONS);
+        let candidates = &by_recency[..reclaimable];
+        candidates
+            .iter()
+            .find(|(_, _, exited)| *exited)
+            .or_else(|| candidates.first())
+            .map(|(id, _, _)| *id)
+    }
 }
 
 impl ExecRuntime {
@@ -66,36 +118,30 @@ impl ExecRuntime {
         Ok(Self {
             runtime: Some(runtime),
             registry: Mutex::new(SessionRegistry::default()),
+            spawn_gate: Mutex::new(()),
             next_session_id: AtomicU64::new(1),
         })
     }
 
     pub fn spawn(&self, request: SpawnRequest) -> Result<u64> {
         validate_spawn_request(&request)?;
-        {
-            let mut registry = self
-                .registry
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if registry.sessions.len() + registry.pending_spawns >= MAX_SESSIONS {
-                return Err(ExecError::new(
-                    ErrorKind::ResourceExhausted,
-                    format!("at most {MAX_SESSIONS} sessions may run concurrently"),
-                ));
-            }
-            registry.pending_spawns += 1;
+        let _gate = self
+            .spawn_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(session) = self.registry().make_room()? {
+            session.terminate();
         }
 
-        let spawned = match self.runtime().block_on(spawn_shell_command(&request)) {
-            Ok(spawned) => spawned,
-            Err(error) => {
-                self.finish_pending_spawn();
-                return Err(ExecError::new(
+        let spawned = self
+            .runtime()
+            .block_on(spawn_shell_command(&request))
+            .map_err(|error| {
+                ExecError::new(
                     ErrorKind::SpawnFailed,
                     format!("failed to spawn command: {error}"),
-                ));
-            }
-        };
+                )
+            })?;
         let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
         let SpawnedProcess {
             session: process,
@@ -104,14 +150,16 @@ impl ExecRuntime {
             exit_rx,
         } = spawned;
         let session = Arc::new(Session::new(process, request.tty));
-
         {
-            let mut registry = self
-                .registry
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            registry.pending_spawns -= 1;
-            registry.sessions.insert(session_id, Arc::clone(&session));
+            let mut registry = self.registry();
+            let last_used = registry.tick();
+            registry.sessions.insert(
+                session_id,
+                SessionEntry {
+                    session: Arc::clone(&session),
+                    last_used,
+                },
+            );
         }
         self.runtime().spawn(collect_process_output(
             session, stdout_rx, stderr_rx, exit_rx,
@@ -133,11 +181,7 @@ impl ExecRuntime {
         let session = self.get_session(session_id)?;
         let output = session.take_output();
         if output.exit_code.is_some() {
-            self.registry
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .sessions
-                .remove(&session_id);
+            self.registry().sessions.remove(&session_id);
         }
         Ok(PollResponse {
             original_bytes: output
@@ -160,12 +204,10 @@ impl ExecRuntime {
 
     pub fn shutdown(&self) {
         let sessions = self
-            .registry
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .registry()
             .sessions
             .drain()
-            .map(|(_, session)| session)
+            .map(|(_, entry)| entry.session)
             .collect::<Vec<_>>();
         for session in sessions {
             session.terminate();
@@ -178,27 +220,23 @@ impl ExecRuntime {
             .expect("runtime is available until ExecRuntime::drop")
     }
 
-    fn get_session(&self, session_id: u64) -> Result<Arc<Session>> {
+    fn registry(&self) -> MutexGuard<'_, SessionRegistry> {
         self.registry
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .sessions
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| {
-                ExecError::new(
-                    ErrorKind::NotFound,
-                    format!("unknown session_id {session_id}"),
-                )
-            })
     }
 
-    fn finish_pending_spawn(&self) {
-        let mut registry = self
-            .registry
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        registry.pending_spawns -= 1;
+    fn get_session(&self, session_id: u64) -> Result<Arc<Session>> {
+        let mut registry = self.registry();
+        let last_used = registry.tick();
+        let entry = registry.sessions.get_mut(&session_id).ok_or_else(|| {
+            ExecError::new(
+                ErrorKind::NotFound,
+                format!("unknown session_id {session_id}"),
+            )
+        })?;
+        entry.last_used = last_used;
+        Ok(Arc::clone(&entry.session))
     }
 }
 
@@ -230,11 +268,12 @@ fn validate_spawn_request(request: &SpawnRequest) -> Result<()> {
 async fn spawn_shell_command(request: &SpawnRequest) -> anyhow::Result<SpawnedProcess> {
     let (program, args) = shell_command(&request.cmd);
     let environment = std::env::vars().collect::<HashMap<_, _>>();
+    let cwd = Path::new(&request.workdir);
     if request.tty {
         persistent_exec_pty::spawn_pty_process(
             &program,
             &args,
-            Path::new(&request.workdir),
+            cwd,
             &environment,
             &None,
             TerminalSize::default(),
@@ -242,15 +281,8 @@ async fn spawn_shell_command(request: &SpawnRequest) -> anyhow::Result<SpawnedPr
         )
         .await
     } else {
-        persistent_exec_pty::spawn_pipe_process(
-            &program,
-            &args,
-            Path::new(&request.workdir),
-            &environment,
-            &None,
-            &[],
-        )
-        .await
+        persistent_exec_pty::spawn_pipe_process(&program, &args, cwd, &environment, &None, &[])
+            .await
     }
 }
 

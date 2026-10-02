@@ -110,7 +110,7 @@ fn pipe_session_accepts_stdin_and_returns_incremental_output() {
 
 #[cfg(unix)]
 #[test]
-fn concurrent_spawns_respect_the_session_limit() {
+fn concurrent_spawns_keep_the_session_count_bounded() {
     const CALLERS: usize = 80;
     const SESSION_LIMIT: usize = 64;
     let runtime = Arc::new(ExecRuntime::new().expect("runtime should initialize"));
@@ -126,24 +126,106 @@ fn concurrent_spawns_respect_the_session_limit() {
         })
         .collect::<Vec<_>>();
 
-    let results = handles
+    let session_ids = handles
         .into_iter()
-        .map(|handle| handle.join().expect("spawn thread should not panic"))
-        .collect::<Vec<_>>();
-    let successes = results.iter().filter(|result| result.is_ok()).count();
-    let exhausted = results
-        .iter()
-        .filter(|result| {
-            result
-                .as_ref()
-                .is_err_and(|error| error.kind() == ErrorKind::ResourceExhausted)
+        .map(|handle| {
+            handle
+                .join()
+                .expect("spawn thread should not panic")
+                .expect("the oldest session is reclaimed instead of rejecting the spawn")
         })
+        .collect::<Vec<_>>();
+    let live = session_ids
+        .iter()
+        .filter(|session_id| runtime.poll(**session_id).is_ok())
         .count();
 
+    assert_eq!(live, SESSION_LIMIT);
+    runtime.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn exited_sessions_that_were_never_polled_are_reclaimed() {
+    const SESSION_LIMIT: u64 = 64;
+    let runtime = ExecRuntime::new().expect("runtime should initialize");
+    let session_ids = (0..SESSION_LIMIT)
+        .map(|_| {
+            runtime
+                .spawn(request("true", false))
+                .expect("spawn should succeed")
+        })
+        .collect::<Vec<_>>();
+    std::thread::sleep(Duration::from_millis(1_500));
+
+    let next = runtime
+        .spawn(request("sleep 60", false))
+        .expect("an abandoned exited session must not exhaust the limit");
+
     assert_eq!(
-        (successes, exhausted),
-        (SESSION_LIMIT, CALLERS - SESSION_LIMIT)
+        runtime
+            .poll(session_ids[0])
+            .expect_err("oldest is reclaimed")
+            .kind(),
+        ErrorKind::NotFound
     );
+    assert!(runtime.poll(next).is_ok());
+    runtime.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn live_sessions_beyond_the_limit_evict_the_least_recently_used() {
+    const SESSION_LIMIT: usize = 64;
+    let pid_file =
+        std::env::temp_dir().join(format!("persistent-exec-evict-{}", std::process::id()));
+    let _ = std::fs::remove_file(&pid_file);
+    let runtime = ExecRuntime::new().expect("runtime should initialize");
+    let victim = runtime
+        .spawn(request(
+            &format!("echo $$ > '{}'; exec sleep 60", pid_file.display()),
+            false,
+        ))
+        .expect("spawn should succeed");
+    let others = (1..SESSION_LIMIT)
+        .map(|_| {
+            runtime
+                .spawn(request("sleep 60", false))
+                .expect("spawn should succeed")
+        })
+        .collect::<Vec<_>>();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
+        {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "pid file was not written");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // Touching the second-oldest session leaves the first one least recently used.
+    runtime.poll(others[0]).expect("session is live");
+
+    runtime
+        .spawn(request("sleep 60", false))
+        .expect("the least recently used session is evicted");
+
+    assert_eq!(
+        runtime.poll(victim).expect_err("victim is evicted").kind(),
+        ErrorKind::NotFound
+    );
+    assert!(runtime.poll(others[0]).is_ok());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "evicted process was not terminated"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_file(&pid_file);
     runtime.shutdown();
 }
 

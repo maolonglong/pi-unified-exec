@@ -7,6 +7,7 @@ fmt:
 lint:
 	cargo fmt --all --check
 	npx oxfmt --check packages
+	node scripts/check-lockfile-registry.mjs
 	CARGO_BUILD_WARNINGS=deny cargo clippy --workspace --all-targets --all-features --locked
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 	npm run build

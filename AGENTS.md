@@ -27,7 +27,7 @@
 
 - Match checks to the change: documentation-only edits need no build or test suite; localized code changes need affected formatting, lint/type checks, and tests. Use `make fmt`, `make lint`, and `make test` for shared runtime, FFI, or cross-package changes.
 - Before Node/Bun runtime tests (`make test-node`, `make test-bun`, `make test-pi`), run `cargo build -p persistent-exec-ffi --locked`; the SDKs load the local native library.
-- Run local npm commands with `NPM_CONFIG_REGISTRY=https://registry.npmjs.org/` so lockfile `resolved` URLs stay on the public registry.
+- Run local npm commands with `NPM_CONFIG_REGISTRY=https://registry.npmjs.org/` so lockfile `resolved` URLs stay on the public registry; `scripts/check-lockfile-registry.mjs` enforces it in `make lint` and CI.
 - Run Linux PTY tests in a container with an init process (`docker run --init`); without one, PID 1 never reaps zombies and the process-group tests fail spuriously.
 - `scripts/*.test.mjs` copy every directory under `packages/`; remove stale untracked package directories before running `npm test` locally.
 - Local verification and fixing failures caused by the requested change do not need intermediate approval. Finish the affected checks rather than stopping at the first implementation; report blockers and unrelated failures.

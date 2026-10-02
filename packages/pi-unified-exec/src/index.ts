@@ -93,7 +93,69 @@ const stdinParameters = Type.Object(
 
 export default function persistentExecExtension(pi: ExtensionAPI): void {
   let runtime: RuntimeApi | null = null;
+  let creating: Promise<RuntimeApi> | null = null;
+  // Bumped whenever the runtime is torn down so a creation still in flight cannot install itself.
+  let generation = 0;
+  let prepared = false;
   const sessionInteractions = new Map<number, Promise<void>>();
+
+  function destroyRuntime(): void {
+    generation += 1;
+    creating = null;
+    prepared = false;
+    runtime?.destroy();
+    runtime = null;
+    sessionInteractions.clear();
+  }
+
+  /** One native runtime per pi session, created on first use and shared by concurrent callers. */
+  function ensureRuntime(): Promise<RuntimeApi> {
+    if (runtime) return Promise.resolve(runtime);
+    if (!creating) {
+      const owner = generation;
+      const attempt = createRuntime(owner);
+      creating = attempt;
+      const settle = () => {
+        if (creating === attempt) creating = null;
+      };
+      attempt.then(settle, settle);
+    }
+    return creating;
+  }
+
+  async function createRuntime(owner: number): Promise<RuntimeApi> {
+    const sdk = await loadSdk();
+    const created = sdk.PersistentExecRuntime.create();
+    if (owner !== generation) {
+      created.destroy();
+      throw new Error("persistent-exec runtime was shut down while starting");
+    }
+    runtime = created;
+    return created;
+  }
+
+  /** Swaps pi's shell tools for ours, or hands shell access back and tells the user on failure. */
+  async function prepareSession(ctx: UiContext | undefined): Promise<void> {
+    prepared = true;
+    const others = pi.getActiveTools().filter((name) => name !== EXEC_TOOL && name !== STDIN_TOOL);
+    try {
+      await ensureRuntime();
+    } catch (error) {
+      // pi activates newly registered tools; without a runtime they could only fail.
+      pi.setActiveTools(others);
+      const reason = error instanceof Error ? error.message : String(error);
+      ctx?.ui?.notify?.(
+        `pi-unified-exec could not start its native runtime (${reason}); using pi's built-in shell tools.`,
+        "error",
+      );
+      return;
+    }
+    pi.setActiveTools([
+      ...others.filter((name) => !REPLACED_TOOLS.has(name)),
+      EXEC_TOOL,
+      STDIN_TOOL,
+    ]);
+  }
 
   pi.registerTool({
     name: EXEC_TOOL,
@@ -106,7 +168,6 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
     parameters: execParameters,
     outputSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const activeRuntime = requireRuntime(runtime);
       const yieldMs = clampExecYield(
         optionalUnsignedInteger(params.yield_time_ms, "yield_time_ms") ?? DEFAULT_EXEC_YIELD_MS,
       );
@@ -114,6 +175,7 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
         optionalUnsignedInteger(params.max_output_tokens, "max_output_tokens") ??
         DEFAULT_OUTPUT_TOKENS;
       signal?.throwIfAborted();
+      const activeRuntime = await ensureRuntime();
       const sessionId = activeRuntime.spawn({
         cmd: params.cmd,
         workdir: resolve(ctx.cwd, params.workdir ?? "."),
@@ -175,7 +237,9 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
         optionalUnsignedInteger(params.max_output_tokens, "max_output_tokens") ??
         DEFAULT_OUTPUT_TOKENS;
       return withSessionLock(sessionInteractions, sessionId, signal, async () => {
-        const activeRuntime = requireRuntime(runtime);
+        // Without a runtime no session can exist, so a poll fails like any unknown session ID.
+        const activeRuntime = runtime;
+        if (!activeRuntime) throw new Error(`unknown session_id ${sessionId}`);
         signal?.throwIfAborted();
         if (chars !== "") activeRuntime.write(sessionId, chars);
 
@@ -214,38 +278,24 @@ export default function persistentExecExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    // One native runtime per pi session; a start without a preceding shutdown must not leak one.
-    runtime?.destroy();
-    runtime = null;
-    sessionInteractions.clear();
-    const others = pi.getActiveTools().filter((name) => name !== EXEC_TOOL && name !== STDIN_TOOL);
-    try {
-      const sdk = await loadSdk();
-      runtime = sdk.PersistentExecRuntime.create();
-    } catch (error) {
-      // pi activates newly registered tools; without a runtime they could only fail, so hand
-      // shell access back to the built-in tools instead of breaking the session.
-      pi.setActiveTools(others);
-      const reason = error instanceof Error ? error.message : String(error);
-      ctx.ui.notify(
-        `pi-unified-exec could not start its native runtime (${reason}); using pi's built-in shell tools.`,
-        "error",
-      );
-      return;
-    }
-    pi.setActiveTools([
-      ...others.filter((name) => !REPLACED_TOOLS.has(name)),
-      EXEC_TOOL,
-      STDIN_TOOL,
-    ]);
+    // A start without a preceding shutdown must not leak the previous runtime.
+    destroyRuntime();
+    await prepareSession(ctx);
+  });
+
+  // Hosts embedding pi through the SDK can prompt without emitting session_start.
+  pi.on("before_agent_start", async (_event, ctx) => {
+    if (!prepared) await prepareSession(ctx);
   });
 
   pi.on("session_shutdown", async () => {
-    runtime?.destroy();
-    runtime = null;
-    sessionInteractions.clear();
+    destroyRuntime();
   });
 }
+
+type UiContext = {
+  ui?: { notify?: (message: string, type?: "info" | "warning" | "error") => void };
+};
 
 type UpdateSink =
   | ((update: {
@@ -304,9 +354,4 @@ function clampWriteYield(yieldMs: number, emptyPoll: boolean): number {
   const minimum = emptyPoll ? MIN_POLL_YIELD_MS : MIN_YIELD_MS;
   const maximum = emptyPoll ? MAX_POLL_YIELD_MS : MAX_WRITE_YIELD_MS;
   return Math.min(Math.max(yieldMs, minimum), maximum);
-}
-
-function requireRuntime(runtime: RuntimeApi | null): RuntimeApi {
-  if (!runtime) throw new Error("persistent-exec runtime is not initialized");
-  return runtime;
 }

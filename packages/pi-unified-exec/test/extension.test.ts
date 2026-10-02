@@ -474,9 +474,9 @@ test(
       { cwd: process.cwd() },
     );
     const firstOutput = String(first.details.output);
-    // ConPTY announces itself with terminal setup sequences before the program's own output.
-    if (process.platform === "win32") expect(stripVTControlCharacters(firstOutput)).toBe("ready");
-    // The program may beat the 250 ms yield elsewhere.
+    // ConPTY announces itself with terminal setup and a window title before the program's own
+    // output, so only the tail is the program's. Elsewhere the program may beat the 250 ms yield.
+    if (process.platform === "win32") expect(firstOutput.endsWith("ready")).toBe(true);
     else expect(["", "ready"]).toContain(firstOutput);
     expect(typeof first.details.session_id).toBe("number");
 
@@ -492,8 +492,9 @@ test(
       { cwd: process.cwd() },
     );
     // The PTY also echoes the written line, so assert only the program's own output.
-    const transcript = stripVTControlCharacters(`${firstOutput}${second.details.output}`);
-    expect(transcript.replace(/hello\r?\n/, "")).toBe("readyreceived:hello");
+    const transcript = `${firstOutput}${second.details.output}`.replace(/hello\r?\n/, "");
+    if (process.platform === "win32") expect(transcript.endsWith("readyreceived:hello")).toBe(true);
+    else expect(transcript).toBe("readyreceived:hello");
     expect(second.details.exit_code).toBe(0);
 
     await harness.handlers.get("session_shutdown")?.();

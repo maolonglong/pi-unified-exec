@@ -23,6 +23,16 @@ const MAX_SESSIONS: usize = 64;
 /// The most recently used sessions are never reclaimed to make room for a new one.
 const PROTECTED_RECENT_SESSIONS: usize = 8;
 
+/// Applied after the inherited environment so commands never block on a pager or color probe.
+const COMMAND_ENV: [(&str, &str); 6] = [
+    ("NO_COLOR", "1"),
+    ("TERM", "dumb"),
+    ("COLORTERM", ""),
+    ("PAGER", "cat"),
+    ("GIT_PAGER", "cat"),
+    ("GH_PAGER", "cat"),
+];
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct SpawnRequest {
     pub cmd: String,
@@ -267,7 +277,7 @@ fn validate_spawn_request(request: &SpawnRequest) -> Result<()> {
 
 async fn spawn_shell_command(request: &SpawnRequest) -> anyhow::Result<SpawnedProcess> {
     let (program, args) = shell_command(&request.cmd);
-    let environment = std::env::vars().collect::<HashMap<_, _>>();
+    let environment = command_environment();
     let cwd = Path::new(&request.workdir);
     if request.tty {
         persistent_exec_pty::spawn_pty_process(
@@ -292,6 +302,16 @@ async fn spawn_shell_command(request: &SpawnRequest) -> anyhow::Result<SpawnedPr
         )
         .await
     }
+}
+
+fn command_environment() -> HashMap<String, String> {
+    let mut environment = std::env::vars().collect::<HashMap<_, _>>();
+    environment.extend(
+        COMMAND_ENV
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string())),
+    );
+    environment
 }
 
 #[cfg(unix)]

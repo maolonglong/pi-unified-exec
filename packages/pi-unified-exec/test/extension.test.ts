@@ -458,6 +458,7 @@ test(
       "call-1",
       {
         cmd: "node -e \"setTimeout(()=>{process.stdout.write('ready');process.stdin.once('data',d=>{process.stdout.write('received:'+d.toString().trim());process.stdin.destroy()})},300)\"",
+        tty: true,
         yield_time_ms: 250,
       },
       undefined,
@@ -478,7 +479,9 @@ test(
       undefined,
       { cwd: process.cwd() },
     );
-    expect(`${first.details.output}${second.details.output}`).toBe("readyreceived:hello");
+    // The PTY also echoes the written line, so assert only the program's own output.
+    const transcript = `${first.details.output}${second.details.output}`;
+    expect(transcript.replace(/hello\r?\n/, "")).toBe("readyreceived:hello");
     expect(second.details.exit_code).toBe(0);
 
     await harness.handlers.get("session_shutdown")?.();
@@ -501,7 +504,7 @@ test(
     const command = `node -e "eval(Buffer.from('${encodedScript}','base64').toString())"`;
     const first = await exec.execute(
       "call-start",
-      { cmd: command, yield_time_ms: 250 },
+      { cmd: command, tty: true, yield_time_ms: 250 },
       undefined,
       undefined,
       { cwd: process.cwd() },

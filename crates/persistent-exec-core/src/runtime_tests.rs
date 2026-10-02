@@ -80,12 +80,12 @@ fn completed_command_returns_output_and_exit_code() {
 
 #[cfg(unix)]
 #[test]
-fn pipe_session_accepts_stdin_and_returns_incremental_output() {
+fn tty_session_accepts_stdin_and_returns_incremental_output() {
     let runtime = ExecRuntime::new().expect("runtime should initialize");
     let session_id = runtime
         .spawn(request(
             "printf ready; read line; printf 'received:%s' \"$line\"",
-            false,
+            true,
         ))
         .expect("spawn should succeed");
 
@@ -104,8 +104,44 @@ fn pipe_session_accepts_stdin_and_returns_incremental_output() {
     let second = collect_until_exit(&runtime, session_id);
 
     assert_eq!(first.output, b"ready");
-    assert_eq!(second.output, b"received:hello");
+    assert!(
+        String::from_utf8_lossy(&second.output).ends_with("received:hello"),
+        "unexpected output: {:?}",
+        String::from_utf8_lossy(&second.output)
+    );
     assert_eq!(second.exit_code, Some(0));
+}
+
+#[cfg(unix)]
+#[test]
+fn pipe_session_stdin_is_closed() {
+    let runtime = ExecRuntime::new().expect("runtime should initialize");
+
+    // A reader of stdin sees EOF immediately instead of hanging forever.
+    let reader = runtime
+        .spawn(request("cat; printf done", false))
+        .expect("spawn should succeed");
+    let response = collect_until_exit(&runtime, reader);
+    assert_eq!(
+        (response.output.as_slice(), response.exit_code),
+        (&b"done"[..], Some(0))
+    );
+
+    let sleeper = runtime
+        .spawn(request("sleep 60", false))
+        .expect("spawn should succeed");
+    let error = runtime
+        .write(sleeper, "input\n".to_string())
+        .expect_err("pipe stdin must be closed");
+    assert_eq!(error.kind(), ErrorKind::InvalidState);
+    assert_eq!(
+        error.message(),
+        "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open"
+    );
+    runtime
+        .write(sleeper, "\u{3}".to_string())
+        .expect("interrupt is still accepted");
+    assert_ne!(collect_until_exit(&runtime, sleeper).exit_code, Some(0));
 }
 
 #[cfg(unix)]

@@ -37,6 +37,16 @@ impl Session {
     }
 
     pub(crate) fn write(&self, bytes: Vec<u8>) -> Result<()> {
+        if !self.tty {
+            return Err(ExecError::new(
+                ErrorKind::InvalidState,
+                "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
+            ));
+        }
+        self.write_to_terminal(bytes)
+    }
+
+    fn write_to_terminal(&self, bytes: Vec<u8>) -> Result<()> {
         if self.is_finished() {
             return Err(ExecError::new(
                 ErrorKind::InvalidState,
@@ -62,16 +72,16 @@ impl Session {
 
     pub(crate) fn interrupt(&self) -> Result<()> {
         if self.tty {
-            return self.write(vec![0x03]);
+            return self.write_to_terminal(vec![0x03]);
         }
-        match self.process.signal(ProcessSignal::Interrupt) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::Unsupported => self.write(vec![0x03]),
-            Err(error) => Err(ExecError::new(
-                ErrorKind::Internal,
-                format!("failed to interrupt process group: {error}"),
-            )),
-        }
+        self.process
+            .signal(ProcessSignal::Interrupt)
+            .map_err(|error| {
+                ExecError::new(
+                    ErrorKind::Internal,
+                    format!("failed to interrupt process group: {error}"),
+                )
+            })
     }
 
     pub(crate) fn terminate(&self) {

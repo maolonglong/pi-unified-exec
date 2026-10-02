@@ -281,8 +281,16 @@ async fn spawn_shell_command(request: &SpawnRequest) -> anyhow::Result<SpawnedPr
         )
         .await
     } else {
-        persistent_exec_pty::spawn_pipe_process(&program, &args, cwd, &environment, &None, &[])
-            .await
+        // Without a terminal nothing can answer a prompt, so readers of stdin see EOF.
+        persistent_exec_pty::spawn_pipe_process_no_stdin(
+            &program,
+            &args,
+            cwd,
+            &environment,
+            &None,
+            &[],
+        )
+        .await
     }
 }
 

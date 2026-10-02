@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::io::FromRawHandle;
 use std::os::windows::io::OwnedHandle;
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -21,6 +22,53 @@ use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
 
 const READY_MARKER: &str = "__CODEX_CHILD_READY__";
 const VALUE_MARKER: &str = "__CODEX_CHILD_VALUE__";
+
+#[tokio::test]
+async fn piped_child_has_no_console_when_the_host_is_detached() -> anyhow::Result<()> {
+    // The test runner may own a console; re-execute detached so children cannot inherit one.
+    if std::env::var_os("PERSISTENT_EXEC_DETACHED_CONSOLE_PROBE").is_none() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "tests::windows_tests::piped_child_has_no_console_when_the_host_is_detached",
+                "--nocapture",
+            ])
+            .env("PERSISTENT_EXEC_DETACHED_CONSOLE_PROBE", "1")
+            .creation_flags(winapi::um::winbase::DETACHED_PROCESS)
+            .output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "detached probe failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return Ok(());
+    }
+    let Some(python) = find_python() else {
+        eprintln!("python not found; skipping Windows pipe console test");
+        return Ok(());
+    };
+    let env: HashMap<String, String> = std::env::vars().collect();
+    let spawned = spawn_pipe_process_no_stdin(
+        &python,
+        &[
+            "-u".to_string(),
+            "-c".to_string(),
+            "import ctypes; print(ctypes.windll.kernel32.GetConsoleWindow())".to_string(),
+        ],
+        Path::new("."),
+        &env,
+        /*arg0*/ &None,
+        &[],
+    )
+    .await?;
+    let (_session, output_rx, exit_rx) = combine_spawned_output(spawned);
+    let (output, exit_code) =
+        collect_output_until_exit(output_rx, exit_rx, /*timeout_ms*/ 10_000).await;
+    assert_eq!(exit_code, 0);
+    assert_eq!(String::from_utf8_lossy(&output).trim(), "0");
+    Ok(())
+}
 
 struct WindowsShell {
     name: &'static str,

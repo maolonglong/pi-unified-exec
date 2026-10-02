@@ -22,6 +22,6 @@ Starting a new session, reloading extensions, or exiting pi terminates processes
 - Truncation reports the original size, including bytes omitted by the native runtime. Omitted output is not saved to disk and cannot be recovered by expanding the tool. Redirect a command's output to a file when you need a complete log.
 - Cancelling `exec_command` terminates its process and returns captured output, including the bounded termination drain. Cancelling `write_stdin` stops waiting but leaves the session available. Both return `cancelled: true` when cancellation interrupts an active wait; a surviving session is identified by `session_id`.
 - Cancelling a queued call or passing invalid parameters does not send input. Interactions with the same session are serialized.
-- With `tty: true`, Ctrl-C is sent through the terminal to its foreground job. Without a PTY, Ctrl-C interrupts the process group on Unix and terminates the process/job on Windows. Unlike Codex's non-TTY mode, pipes remain open for stdin interaction.
+- With `tty: true`, Ctrl-C is sent through the terminal to its foreground job. Without a PTY, Ctrl-C interrupts the process group on Unix and terminates the process/job on Windows. Like Codex, commands without a PTY run with stdin closed; use `tty: true` for interactive input.
 
 Collapsed tools show a short command preview and the last five visual output lines. Expanding reveals the full command and all retained output, not omitted output. Nonzero exits and cancellations use pi's error result status without dropping structured output.

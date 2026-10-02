@@ -30,13 +30,19 @@ interface RegisteredTool {
   parameters: Record<string, unknown>;
   promptSnippet?: string;
   promptGuidelines?: string[];
+  outputSchema?: Record<string, unknown>;
   execute(
     toolCallId: string,
     params: Record<string, unknown>,
     signal: AbortSignal | undefined,
     onUpdate: ((update: { content: Array<{ type: string; text: string }> }) => void) | undefined,
     context: { cwd: string },
-  ): Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }>;
+  ): Promise<{
+    content: Array<{ type: string; text: string }>;
+    details: Record<string, unknown>;
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+  }>;
   renderCall?(args: Record<string, any>, theme: TestTheme, context: RenderContext): Component;
   renderResult?(
     result: { content: Array<{ type: string; text: string }>; details?: Record<string, unknown> },
@@ -69,7 +75,7 @@ function renderContext(
 function createHarness() {
   const tools = new Map<string, RegisteredTool>();
   const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
-  let activeTools = ["read", "bash", "write"];
+  let activeTools = ["read", "bash", "powershell", "write"];
   const pi = {
     registerTool(tool: RegisteredTool & { name: string }) {
       tools.set(tool.name, tool);
@@ -248,7 +254,7 @@ test("renders untrusted output as text without changing tool results", () => {
   const output =
     "中文🙂\tstart\x1b[31mRED\x1b[0m\x1b[2J\x1b[H\x1b[?25l" +
     "\x1b]2;TITLE\x07\x1b]52;c;VEVTVA==\x1b\\" +
-    "\x00\x07\b\r\x7f\x9b2J\x85\ufff9end\nsecond";
+    "\x00\x07\b\x7f\x9b2J\x85\ufff9end\nsecond";
   const tools = createHarness().tools;
   for (const name of ["exec_command", "write_stdin"]) {
     const tool = tools.get(name)!;
@@ -427,10 +433,11 @@ test("renders failures and truncation metadata", () => {
     {
       content: [{ type: "text", text: "ignored" }],
       details: {
-        output: "tail\n\n[Output truncated from approximately 1234 tokens.]",
+        output: "tail",
         exit_code: 2,
         wall_time_seconds: 0.25,
         original_token_count: 1234,
+        truncated: true,
       },
     },
     { expanded: false, isPartial: false },
@@ -449,6 +456,7 @@ test(
     await harness.handlers.get("session_start")?.();
 
     expect(harness.activeTools()).toEqual(["read", "write", "exec_command", "write_stdin"]);
+    expect(harness.handlers.has("tool_result")).toBe(false);
 
     const exec = harness.tools.get("exec_command");
     const stdin = harness.tools.get("write_stdin");
@@ -694,10 +702,9 @@ test("cancelled exec preserves partial output and termination drain", async () =
     cancelled: true,
   });
   expect(result.details.session_id).toBeUndefined();
-  expect(JSON.parse(result.content[0].text)).toEqual(result.details);
-  expect(
-    await harness.handlers.get("tool_result")?.({ toolName: "exec_command", ...result }),
-  ).toEqual({ isError: true });
+  expect(result.structuredContent).toEqual(result.details);
+  expect(result.isError).toBe(true);
+  expect(result.content[0].text).toContain("Cancelled");
   await harness.handlers.get("session_shutdown")?.();
 });
 
@@ -735,10 +742,7 @@ test("cancelled poll preserves consumed output without terminating the session",
 });
 
 test("pi final frame expands commands, completes poll titles and uses failure background", async () => {
-  const { ToolExecutionComponent } =
-    await import("../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js");
-  const { theme } =
-    await import("../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js");
+  const { ToolExecutionComponent } = await import("@earendil-works/pi-coding-agent");
   const harness = createHarness();
   const command = "echo first\necho second\necho third\necho CRITICAL_LAST_COMMAND";
   const ui = { requestRender() {} };
@@ -756,12 +760,7 @@ test("pi final frame expands commands, completes poll titles and uses failure ba
     content: [{ type: "text" as const, text: "diagnostic" }],
     details: { output: "diagnostic", exit_code: 7, wall_time_seconds: 1 },
   };
-  const status = (await harness.handlers.get("tool_result")?.({
-    toolName: "exec_command",
-    ...result,
-  })) as { isError: boolean };
-  expect(status).toEqual({ isError: true });
-  component.updateResult({ ...result, ...status });
+  component.updateResult({ ...result, isError: true });
   expect(stripVTControlCharacters(component.render(48).join("\n"))).not.toContain(
     "CRITICAL_LAST_COMMAND",
   );
@@ -769,7 +768,29 @@ test("pi final frame expands commands, completes poll titles and uses failure ba
   const expanded = component.render(48).join("\n");
   expect(stripVTControlCharacters(expanded)).toContain("CRITICAL_LAST_COMMAND");
   expect(stripVTControlCharacters(expanded)).toContain("Exit 7");
-  expect(expanded).toContain(theme.bg("toolErrorBg", " ".repeat(48)));
+  // The failure state must paint a different background than a successful result.
+  const success = new ToolExecutionComponent(
+    "exec_command",
+    "ok",
+    { cmd: command },
+    {},
+    tool as never,
+    ui as never,
+    process.cwd(),
+  );
+  success.updateResult({
+    content: [{ type: "text" as const, text: "fine" }],
+    details: { output: "fine", exit_code: 0, wall_time_seconds: 1 },
+    isError: false,
+  });
+  success.setExpanded(true);
+  const background = (frame: string) =>
+    frame
+      .split("\n")
+      .at(-1)
+      ?.match(/^(?:\x1b\[[0-9;]*m)+/)?.[0];
+  expect(background(expanded)).toBeTruthy();
+  expect(background(expanded)).not.toBe(background(success.render(48).join("\n")));
 
   const poll = new ToolExecutionComponent(
     "write_stdin",
@@ -808,4 +829,163 @@ test("native exec cancellation returns captured output and a terminal result", a
   } finally {
     await harness.handlers.get("session_shutdown")?.();
   }
+});
+
+function resultOf(output: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [{ type: "text", text: "ignored" }],
+    details: { output, exit_code: 0, wall_time_seconds: 1, ...extra },
+  };
+}
+
+function renderOutput(output: string, extra: Record<string, unknown> = {}, width = 80): string {
+  const exec = createHarness().tools.get("exec_command")!;
+  const component = exec.renderResult!(
+    resultOf(output, extra),
+    { expanded: true, isPartial: false },
+    plainTheme,
+    renderContext({ cmd: "x" }),
+  );
+  return component.render(width).join("\n");
+}
+
+test("renders carriage returns the way a terminal overwrites them", () => {
+  const progress = renderOutput("10%\r20%\r30%\ndone\r\nnext");
+  expect(progress).toContain("30%");
+  expect(progress).not.toContain("10%");
+  expect(progress).not.toContain("20%");
+  // CRLF is a line break, not an overwrite.
+  expect(progress).toMatch(/\ndone\s*\nnext/);
+  // A shorter rewrite only replaces the prefix it covers.
+  expect(renderOutput("abcdef\rXY")).toContain("XYcdef");
+});
+
+test("formats long durations like pi's shell tools", () => {
+  // Without render timestamps the tool-reported wall time is used.
+  expect(renderOutput("x", { wall_time_seconds: 125 })).toContain("took 2m 5s");
+  const exec = createHarness().tools.get("exec_command")!;
+  const text = (ms: number) =>
+    exec.renderResult!(
+      resultOf("x"),
+      { expanded: false, isPartial: false },
+      plainTheme,
+      renderContext({ cmd: "x" }, { startedAt: 0, endedAt: ms }),
+    )
+      .render(120)
+      .join("\n");
+  expect(text(125_000)).toContain("took 2m 5s");
+  expect(text(3_725_000)).toContain("took 1h 2m 5s");
+  expect(text(59_900)).toContain("took 59.9s");
+});
+
+test("gives the model Codex's text result and structured content", async () => {
+  const harness = createHarness();
+  await harness.handlers.get("session_start")?.();
+  const exec = harness.tools.get("exec_command")!;
+  const context = { cwd: process.cwd() };
+  try {
+    const done = await exec.execute("ok", { cmd: "printf hi" }, undefined, undefined, context);
+    expect(done.content).toHaveLength(1);
+    expect(done.content[0].text).toMatch(
+      /^Wall time: \d+\.\d{4} seconds\nProcess exited with code 0\nOriginal token count: 1\nOutput:\nhi$/,
+    );
+    expect(done.structuredContent).toEqual(done.details);
+    expect(done.details).toMatchObject({ output: "hi", exit_code: 0, original_token_count: 1 });
+    expect(done.isError).toBeUndefined();
+
+    const failed = await exec.execute("bad", { cmd: "exit 3" }, undefined, undefined, context);
+    expect(failed.content[0].text).toContain("Process exited with code 3");
+    expect(failed.isError).toBe(true);
+
+    const running = await exec.execute(
+      "run",
+      { cmd: "sleep 30", yield_time_ms: 250 },
+      undefined,
+      undefined,
+      context,
+    );
+    expect(running.content[0].text).toMatch(
+      /^Wall time: \d+\.\d{4} seconds\nProcess running with session ID \d+\nOriginal token count: 0\nOutput:\n$/,
+    );
+    expect(running.isError).toBeUndefined();
+    expect(exec.outputSchema).toMatchObject({
+      type: "object",
+      required: ["wall_time_seconds", "output"],
+      additionalProperties: false,
+    });
+  } finally {
+    await harness.handlers.get("session_shutdown")?.();
+  }
+});
+
+test("marks truncation in the details instead of the output text", async () => {
+  const harness = createHarness();
+  await harness.handlers.get("session_start")?.();
+  try {
+    const result = await harness.tools.get("exec_command")!.execute(
+      "large",
+      {
+        cmd: "node -e \"process.stdout.write('x'.repeat(100000))\"",
+        yield_time_ms: 5_000,
+        max_output_tokens: 10,
+      },
+      undefined,
+      undefined,
+      { cwd: process.cwd() },
+    );
+    expect(result.details.truncated).toBe(true);
+    expect(String(result.details.output)).not.toContain("Output truncated");
+    expect(result.content[0].text).toContain("Original token count: 25000");
+  } finally {
+    await harness.handlers.get("session_shutdown")?.();
+  }
+});
+
+test("throttles streaming updates", async () => {
+  let polls = 0;
+  const harness = await mockHarness({
+    poll: () => {
+      polls++;
+      return {
+        output: `chunk${polls}\n`,
+        original_bytes: 7,
+        omitted_bytes: 0,
+        exit_code: polls >= 40 ? 0 : null,
+      };
+    },
+  });
+  let updates = 0;
+  const started = performance.now();
+  await harness.tools
+    .get("exec_command")!
+    .execute("stream", { cmd: "x" }, undefined, () => updates++, { cwd: process.cwd() });
+  const seconds = (performance.now() - started) / 1_000;
+  // One initial empty update, then at most one per 100 ms plus the first output.
+  expect(updates).toBeLessThanOrEqual(Math.ceil(seconds * 10) + 3);
+  expect(updates).toBeGreaterThan(1);
+  await harness.handlers.get("session_shutdown")?.();
+});
+
+test("replaces the previous runtime when a session starts twice", async () => {
+  let destroyed = 0;
+  const harness = await mockHarness({
+    destroy: () => {
+      destroyed++;
+    },
+  });
+  const sdk = await loadSdk();
+  const create = spyOn(sdk.PersistentExecRuntime, "create").mockReturnValue({
+    spawn: () => 1,
+    write() {},
+    poll: () => ({ output: "", original_bytes: 0, omitted_bytes: 0, exit_code: null }),
+    terminate() {},
+    destroy() {},
+  });
+  try {
+    await harness.handlers.get("session_start")?.();
+  } finally {
+    create.mockRestore();
+  }
+  expect(destroyed).toBe(1);
+  await harness.handlers.get("session_shutdown")?.();
 });

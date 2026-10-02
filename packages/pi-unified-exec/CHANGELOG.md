@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Commands started without `tty: true` now run with stdin closed, matching Codex: programs that read stdin see EOF instead of hanging, and `write_stdin` rejects non-empty input (other than Ctrl-C) with an error that tells the model to rerun with `tty=true`.
+
 ### Fixed
 
 - Reclaim the least recently used session (exited sessions first, never the eight most recent) when 64 sessions are open, instead of rejecting every new command once enough sessions had exited without being polled again.

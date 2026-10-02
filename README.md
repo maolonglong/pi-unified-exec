@@ -2,7 +2,7 @@
 
 Persistent shell sessions for [pi](https://github.com/badlogic/pi-mono).
 
-The `@chensl/pi-unified-exec` extension replaces pi's built-in `bash` tool with two tools:
+The `@chensl/pi-unified-exec` extension replaces pi's built-in `bash` and `powershell` tools with two tools:
 
 - `exec_command` starts a command and returns its result. If the command is still running, it returns a session ID instead.
 - `write_stdin` sends input to a running session or checks it for more output.

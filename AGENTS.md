@@ -12,6 +12,7 @@
 
 - Keep each pi tool's `promptSnippet` to a one-line capability summary. Put the observable call/result contract in `description` and parameter descriptions.
 - Keep `exec_command` and `write_stdin` function descriptions and supported-parameter schemas verbatim-aligned with Codex; do not expose Codex parameters whose behavior this project does not implement.
+- Keep the model-facing result text in the Codex format (`Wall time`, process status, `Original token count`, `Output`). Expose structured data through `outputSchema` and `structuredContent`, and set `isError` for failed or cancelled commands.
 - Add `promptGuidelines` only for non-obvious behavior that the schema and descriptions cannot express. Do not instruct the model about tools removed from the active set.
 
 ## Cross-platform process behavior
@@ -25,7 +26,10 @@
 ## Verification
 
 - Match checks to the change: documentation-only edits need no build or test suite; localized code changes need affected formatting, lint/type checks, and tests. Use `make fmt`, `make lint`, and `make test` for shared runtime, FFI, or cross-package changes.
-- Test entry points are in `Makefile`: Rust tests via Cargo, wrapper/extension tests via `make test-node`, `make test-bun`, and `make test-pi`. Before Node/Bun runtime tests, run `cargo build -p persistent-exec-ffi --locked`; the SDKs load the local native library.
+- Before Node/Bun runtime tests (`make test-node`, `make test-bun`, `make test-pi`), run `cargo build -p persistent-exec-ffi --locked`; the SDKs load the local native library.
+- Run local npm commands with `NPM_CONFIG_REGISTRY=https://registry.npmjs.org/` so lockfile `resolved` URLs stay on the public registry.
+- Run Linux PTY tests in a container with an init process (`docker run --init`); without one, PID 1 never reaps zombies and the process-group tests fail spuriously.
+- `scripts/*.test.mjs` copy every directory under `packages/`; remove stale untracked package directories before running `npm test` locally.
 - Local verification and fixing failures caused by the requested change do not need intermediate approval. Finish the affected checks rather than stopping at the first implementation; report blockers and unrelated failures.
 - For packaging or release changes, also run `make build-release`, inspect `npm pack` contents, and verify an isolated tarball install. Native packages must contain the dynamic library, `LICENSE`, and `NOTICE`.
 

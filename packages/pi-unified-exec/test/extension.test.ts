@@ -884,7 +884,13 @@ test("gives the model Codex's text result and structured content", async () => {
   const exec = harness.tools.get("exec_command")!;
   const context = { cwd: process.cwd() };
   try {
-    const done = await exec.execute("ok", { cmd: "printf hi" }, undefined, undefined, context);
+    const done = await exec.execute(
+      "ok",
+      { cmd: `node -e "process.stdout.write('hi')"` },
+      undefined,
+      undefined,
+      context,
+    );
     expect(done.content).toHaveLength(1);
     expect(done.content[0].text).toMatch(
       /^Wall time: \d+\.\d{4} seconds\nProcess exited with code 0\nOriginal token count: 1\nOutput:\nhi$/,
@@ -893,13 +899,19 @@ test("gives the model Codex's text result and structured content", async () => {
     expect(done.details).toMatchObject({ output: "hi", exit_code: 0, original_token_count: 1 });
     expect(done.isError).toBeUndefined();
 
-    const failed = await exec.execute("bad", { cmd: "exit 3" }, undefined, undefined, context);
+    const failed = await exec.execute(
+      "bad",
+      { cmd: `node -e "process.exit(3)"` },
+      undefined,
+      undefined,
+      context,
+    );
     expect(failed.content[0].text).toContain("Process exited with code 3");
     expect(failed.isError).toBe(true);
 
     const running = await exec.execute(
       "run",
-      { cmd: "sleep 30", yield_time_ms: 250 },
+      { cmd: `node -e "setTimeout(()=>{},30000)"`, yield_time_ms: 250 },
       undefined,
       undefined,
       context,

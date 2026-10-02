@@ -181,6 +181,9 @@ async fn spawn_process_with_stdin_mode(
     }
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
+    // Children talk over pipes; a detached host must not give them a console window.
+    #[cfg(windows)]
+    command.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
 
     #[cfg(windows)]
     let job = crate::win::JobObject::create_without_breakaway().map(Arc::new);

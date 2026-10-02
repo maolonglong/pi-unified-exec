@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+mod linux_fds;
 pub mod pipe;
 mod process;
 pub mod process_group;

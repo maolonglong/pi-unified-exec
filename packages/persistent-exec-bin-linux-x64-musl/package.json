@@ -1,6 +1,6 @@
 {
   "name": "persistent-exec-bin-linux-x64-musl",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Native persistent-exec runtime for Linux x64 musl",
   "homepage": "https://github.com/maolonglong/pi-unified-exec#readme",
   "bugs": {

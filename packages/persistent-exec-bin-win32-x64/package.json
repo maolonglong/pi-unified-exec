@@ -1,6 +1,6 @@
 {
   "name": "persistent-exec-bin-win32-x64",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Native persistent-exec runtime for Windows x64",
   "homepage": "https://github.com/maolonglong/pi-unified-exec#readme",
   "bugs": {

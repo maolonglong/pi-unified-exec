@@ -1,6 +1,6 @@
 {
   "name": "@chensl/pi-unified-exec",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Codex-style unified_exec for pi: long-running shell sessions the model polls and drives with write_stdin (PTY, REPLs, ssh, dev servers, Ctrl-C)",
   "keywords": [
     "codex",
@@ -38,8 +38,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "persistent-exec-bun": "0.1.6",
-    "persistent-exec-node": "0.1.6"
+    "persistent-exec-bun": "0.1.7",
+    "persistent-exec-node": "0.1.7"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.0.0",

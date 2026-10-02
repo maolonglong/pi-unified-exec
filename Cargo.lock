@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "persistent-exec-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "libc",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "persistent-exec-ffi"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "persistent-exec-core",
  "pretty_assertions",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "persistent-exec-pty"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "filedescriptor",

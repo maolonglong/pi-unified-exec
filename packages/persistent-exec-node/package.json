@@ -1,6 +1,6 @@
 {
   "name": "persistent-exec-node",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Node.js FFI bindings for the persistent-exec native runtime",
   "homepage": "https://github.com/maolonglong/pi-unified-exec#readme",
   "bugs": {
@@ -42,13 +42,13 @@
     "typescript": "^5.9.0"
   },
   "optionalDependencies": {
-    "persistent-exec-bin-darwin-arm64": "0.1.6",
-    "persistent-exec-bin-darwin-x64": "0.1.6",
-    "persistent-exec-bin-linux-arm64-gnu": "0.1.6",
-    "persistent-exec-bin-linux-arm64-musl": "0.1.6",
-    "persistent-exec-bin-linux-x64-gnu": "0.1.6",
-    "persistent-exec-bin-linux-x64-musl": "0.1.6",
-    "persistent-exec-bin-win32-arm64": "0.1.6",
-    "persistent-exec-bin-win32-x64": "0.1.6"
+    "persistent-exec-bin-darwin-arm64": "0.1.7",
+    "persistent-exec-bin-darwin-x64": "0.1.7",
+    "persistent-exec-bin-linux-arm64-gnu": "0.1.7",
+    "persistent-exec-bin-linux-arm64-musl": "0.1.7",
+    "persistent-exec-bin-linux-x64-gnu": "0.1.7",
+    "persistent-exec-bin-linux-x64-musl": "0.1.7",
+    "persistent-exec-bin-win32-arm64": "0.1.7",
+    "persistent-exec-bin-win32-x64": "0.1.7"
   }
 }

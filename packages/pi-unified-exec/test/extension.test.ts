@@ -906,7 +906,8 @@ test("gives the model Codex's text result and structured content", async () => {
       undefined,
       context,
     );
-    expect(failed.content[0].text).toContain("Process exited with code 3");
+    // PowerShell reports any failing native command as exit code 1, so only assert non-zero.
+    expect(failed.content[0].text).toMatch(/Process exited with code [1-9]\d*/);
     expect(failed.isError).toBe(true);
 
     const running = await exec.execute(

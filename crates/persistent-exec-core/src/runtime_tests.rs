@@ -183,10 +183,14 @@ fn pty_ctrl_c_interrupts_the_interactive_foreground_job() {
         let response = runtime.poll(session_id).expect("poll should succeed");
         output.extend(response.output);
         output.extend(response.output_tail);
-        if String::from_utf8_lossy(&output).contains("\r\nFOREGROUND_READY\r\n") {
+        if String::from_utf8_lossy(&output).contains("FOREGROUND_READY\r\n") {
             break;
         }
-        assert!(Instant::now() < deadline, "PTY handshake did not arrive");
+        assert!(
+            Instant::now() < deadline,
+            "PTY handshake did not arrive; output: {:?}",
+            String::from_utf8_lossy(&output)
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 

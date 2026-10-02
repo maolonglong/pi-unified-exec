@@ -473,10 +473,11 @@ test(
       undefined,
       { cwd: process.cwd() },
     );
+    const firstOutput = String(first.details.output);
     // ConPTY announces itself with terminal setup sequences before the program's own output.
-    if (process.platform === "win32") {
-      expect(stripVTControlCharacters(first.details.output)).toBe("ready");
-    } else expect(["", "ready"]).toContain(first.details.output); // the program may beat the 250 ms yield
+    if (process.platform === "win32") expect(stripVTControlCharacters(firstOutput)).toBe("ready");
+    // The program may beat the 250 ms yield elsewhere.
+    else expect(["", "ready"]).toContain(firstOutput);
     expect(typeof first.details.session_id).toBe("number");
 
     const second = await stdin.execute(
@@ -491,7 +492,7 @@ test(
       { cwd: process.cwd() },
     );
     // The PTY also echoes the written line, so assert only the program's own output.
-    const transcript = stripVTControlCharacters(`${first.details.output}${second.details.output}`);
+    const transcript = stripVTControlCharacters(`${firstOutput}${second.details.output}`);
     expect(transcript.replace(/hello\r?\n/, "")).toBe("readyreceived:hello");
     expect(second.details.exit_code).toBe(0);
 

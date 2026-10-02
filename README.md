@@ -1,6 +1,6 @@
 # pi-unified-exec
 
-Persistent shell sessions for [pi](https://github.com/badlogic/pi-mono).
+Codex-style `unified_exec` for [pi](https://github.com/badlogic/pi-mono): long-running shell sessions that the model starts, polls, and drives with `write_stdin` (PTY, REPLs, ssh, dev servers, Ctrl-C).
 
 The `@chensl/pi-unified-exec` extension replaces pi's built-in `bash` and `powershell` tools with two tools:
 

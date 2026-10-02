@@ -1,13 +1,17 @@
 {
   "name": "@chensl/pi-unified-exec",
   "version": "0.1.6",
-  "description": "Persistent shell sessions for pi",
+  "description": "Codex-style unified_exec for pi: long-running shell sessions the model polls and drives with write_stdin (PTY, REPLs, ssh, dev servers, Ctrl-C)",
   "keywords": [
+    "codex",
     "persistent-exec",
     "pi",
     "pi-extension",
     "pi-package",
     "pty",
+    "repl",
+    "shell",
+    "terminal",
     "unified-exec"
   ],
   "homepage": "https://github.com/maolonglong/pi-unified-exec#readme",
